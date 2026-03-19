@@ -6,15 +6,19 @@ const TOKEN_SECRET = randomBytes(32).toString('hex');
 /** Set of currently valid session tokens. */
 const activeTokens = new Set<string>();
 
-/** Panel password from environment variable. */
-const PANEL_PASSWORD = process.env.PANEL_PASSWORD || '';
+/**
+ * Returns the panel password, read lazily so dotenv has time to load.
+ */
+function getPanelPassword(): string {
+  return process.env.PANEL_PASSWORD || '';
+}
 
 /**
  * Returns true when panel authentication is enabled
  * (i.e. PANEL_PASSWORD env var is set and non-empty).
  */
 export function isPanelAuthEnabled(): boolean {
-  return PANEL_PASSWORD.length > 0;
+  return getPanelPassword().length > 0;
 }
 
 /**
@@ -23,8 +27,9 @@ export function isPanelAuthEnabled(): boolean {
  * @returns true if the password matches.
  */
 export function validatePassword(password: string): boolean {
-  if (!PANEL_PASSWORD) return false;
-  return password === PANEL_PASSWORD;
+  const pw = getPanelPassword();
+  if (!pw) return false;
+  return password === pw;
 }
 
 /**

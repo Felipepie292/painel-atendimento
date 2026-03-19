@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
@@ -41,6 +42,8 @@ async function start(): Promise<void> {
     fastify.addHook('onRequest', async (request, reply) => {
       // Skip auth for GET requests (dashboard), WebSocket upgrades, and static files
       if (request.method === 'GET') return;
+      // Skip API key check for panel auth routes (login/logout use Bearer tokens, not API key)
+      if (request.url.startsWith('/api/auth/')) return;
 
       const provided = request.headers['x-api-key'] || request.headers.authorization?.replace('Bearer ', '');
       if (provided !== apiKey) {
