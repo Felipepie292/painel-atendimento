@@ -96,6 +96,8 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
         const initials = getInitials(conv.name);
         const avatarColor = getAvatarColor(conv.name);
 
+        const isChurn = conv.tags?.includes('Risco de churn');
+
         return (
           <button
             key={conv.id}
@@ -106,6 +108,8 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               w-full text-left px-3 py-3 border-l-2 transition-all duration-150 flex items-start gap-3
               ${isSelected
                 ? 'border-l-indigo-500 dark:bg-indigo-500/10 bg-indigo-50'
+                : isChurn
+                ? 'border-l-red-500 dark:bg-red-500/5 bg-red-50/50 dark:hover:bg-red-500/10 hover:bg-red-50'
                 : 'border-l-transparent dark:hover:bg-zinc-800/60 hover:bg-gray-100'
               }
             `}
@@ -143,6 +147,26 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               <p className="text-xs dark:text-zinc-400 text-zinc-500 leading-relaxed truncate">
                 {truncate(conv.last_message, 55)}
               </p>
+              {/* Tags */}
+              {conv.tags && conv.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {conv.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className={`inline-block px-1.5 py-0.5 text-[9px] font-medium rounded
+                        ${tag === 'Risco de churn'
+                          ? 'dark:bg-red-500/20 dark:text-red-400 bg-red-50 text-red-600'
+                          : tag === 'Urgente'
+                          ? 'dark:bg-amber-500/20 dark:text-amber-400 bg-amber-50 text-amber-600'
+                          : 'dark:bg-zinc-700/50 dark:text-zinc-400 bg-zinc-100 text-zinc-500'
+                        }
+                      `}
+                    >
+                      {tag === 'Risco de churn' && '\u26A0 '}{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </button>
         );

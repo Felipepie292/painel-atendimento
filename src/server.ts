@@ -9,6 +9,10 @@ import { conversationRoutes } from './routes/conversations.js';
 import { searchRoutes } from './routes/search.js';
 import { metricsRoutes } from './routes/metrics.js';
 import { websocketRoutes } from './routes/websocket.js';
+import { authRoutes } from './routes/auth.js';
+import { analyticsRoutes } from './routes/analytics.js';
+import { exportRoutes } from './routes/export.js';
+import { isPanelAuthEnabled, validateToken } from './services/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,10 +68,33 @@ async function start(): Promise<void> {
     return reply.send({ status: 'ok', uptime: process.uptime() });
   });
 
+  // Panel authentication middleware for GET /api/* routes (when PANEL_PASSWORD is set)
+  // Skips auth for: POST /api/messages (webhook), /api/auth/*, /health, /ws, static files
+  if (isPanelAuthEnabled()) {
+    fastify.addHook('onRequest', async (request, reply) => {
+      const url = request.url;
+
+      // Skip auth for webhook POST, auth routes, health, WebSocket, and static files
+      if (url.startsWith('/api/auth/')) return;
+      if (url === '/api/messages' && request.method === 'POST') return;
+      if (url === '/health') return;
+      if (url === '/ws') return;
+      if (!url.startsWith('/api/')) return;
+
+      const token = (request.headers.authorization ?? '').replace('Bearer ', '');
+      if (!token || !validateToken(token)) {
+        return reply.status(401).send({ error: 'Sessão inválida' });
+      }
+    });
+  }
+
+  await fastify.register(authRoutes, { prefix: '/api' });
   await fastify.register(messageRoutes, { prefix: '/api' });
   await fastify.register(conversationRoutes, { prefix: '/api' });
   await fastify.register(searchRoutes, { prefix: '/api' });
   await fastify.register(metricsRoutes, { prefix: '/api' });
+  await fastify.register(analyticsRoutes, { prefix: '/api' });
+  await fastify.register(exportRoutes, { prefix: '/api' });
   await fastify.register(websocketRoutes);
 
   const port = Number(process.env.PORT) || 3001;

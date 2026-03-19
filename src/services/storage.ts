@@ -1,6 +1,8 @@
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detectTags } from './tags.js';
+import { calculateSatisfactionScore } from './satisfaction.js';
 import type {
   Message,
   Conversation,
@@ -8,11 +10,26 @@ import type {
   ConversationFilters,
   SearchResult,
   Metrics,
+  Analytics,
+  HourlyData,
+  DailyData,
+  TagCount,
+  DailyTrend,
 } from '../types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, '../../data');
 const DATA_FILE = path.join(DATA_DIR, 'messages.json');
+
+/** Raw conversation shape as stored on disk (without computed fields). */
+interface StoredConversation {
+  conversation_id: string;
+  name: string;
+  messages: Message[];
+  last_message_at: string;
+  status: 'active' | 'finished';
+  first_message_at: string;
+}
 
 /** Simple promise-based mutex to serialize read-modify-write cycles. */
 let writeLock: Promise<void> = Promise.resolve();
@@ -39,11 +56,11 @@ async function ensureDataDir(): Promise<void> {
  * Reads all conversations from the JSON file.
  * Returns an empty array if the file does not exist yet.
  */
-async function readAllConversations(): Promise<Conversation[]> {
+async function readAllConversations(): Promise<StoredConversation[]> {
   await ensureDataDir();
   try {
     const raw = await readFile(DATA_FILE, 'utf-8');
-    return JSON.parse(raw) as Conversation[];
+    return JSON.parse(raw) as StoredConversation[];
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return [];
@@ -56,7 +73,7 @@ async function readAllConversations(): Promise<Conversation[]> {
  * Persists conversations to disk using an atomic write strategy:
  * write to a temporary file first, then rename over the target.
  */
-async function writeConversations(conversations: Conversation[]): Promise<void> {
+async function writeConversations(conversations: StoredConversation[]): Promise<void> {
   await ensureDataDir();
   const tempFile = `${DATA_FILE}.tmp`;
   await writeFile(tempFile, JSON.stringify(conversations, null, 2), 'utf-8');
@@ -75,6 +92,17 @@ function getPeriodStart(period: 'today' | '7days' | '30days'): Date {
     start.setDate(start.getDate() - 30);
   }
   return start;
+}
+
+/**
+ * Enriches a stored conversation with computed tags and satisfaction score.
+ */
+function enrichConversation(conv: StoredConversation): Conversation {
+  return {
+    ...conv,
+    tags: detectTags(conv.messages),
+    satisfaction_score: calculateSatisfactionScore(conv.messages),
+  };
 }
 
 /**
@@ -142,6 +170,7 @@ export function addMessage(msg: Message): Promise<{ message: Message; unread_cou
 /**
  * Returns a summary list of all conversations, optionally filtered.
  * Sorted by most recent message first.
+ * Includes auto-detected tags and satisfaction score for each conversation.
  */
 export async function getConversations(filters?: ConversationFilters): Promise<ConversationSummary[]> {
   let conversations = await readAllConversations();
@@ -178,6 +207,8 @@ export async function getConversations(filters?: ConversationFilters): Promise<C
       last_message_at: c.last_message_at,
       status: c.status ?? 'active',
       unread_count: calcUnreadCount(c.messages),
+      tags: detectTags(c.messages),
+      satisfaction_score: calculateSatisfactionScore(c.messages),
     };
   });
 
@@ -191,10 +222,13 @@ export async function getConversations(filters?: ConversationFilters): Promise<C
 /**
  * Returns the full conversation (with all messages) for a given id.
  * Returns null when the conversation does not exist.
+ * Includes auto-detected tags and satisfaction score.
  */
 export async function getConversationById(id: string): Promise<Conversation | null> {
   const conversations = await readAllConversations();
-  return conversations.find((c) => c.conversation_id === id) ?? null;
+  const conv = conversations.find((c) => c.conversation_id === id);
+  if (!conv) return null;
+  return enrichConversation(conv);
 }
 
 /**
@@ -243,10 +277,6 @@ export async function searchMessages(query: string): Promise<SearchResult[]> {
 /**
  * Calculates dashboard metrics.
  * Optionally filters by period ('today', '7days', '30days').
- * - total_today: conversations that have messages in the period
- * - active_now: conversations with status 'active'
- * - avg_response_time_seconds: average seconds between a client message and the next agent reply
- * - total_messages_today: count of all messages in the period
  */
 export async function getMetrics(period?: 'today' | '7days' | '30days'): Promise<Metrics> {
   const conversations = await readAllConversations();
@@ -293,4 +323,193 @@ export async function getMetrics(period?: 'today' | '7days' | '30days'): Promise
     avg_response_time_seconds: responseCount > 0 ? Math.round(totalResponseTime / responseCount) : 0,
     total_messages_today: totalMessages,
   };
+}
+
+/** Portuguese abbreviated day names indexed by JS getDay() (0=Sunday). */
+const DAY_NAMES = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+
+/**
+ * Computes full analytics data for a given period.
+ * @param period - The time period to analyze. Defaults to '30days'.
+ * @returns An Analytics object with distributions, rankings, and rates.
+ */
+export async function getAnalytics(period?: 'today' | '7days' | '30days'): Promise<Analytics> {
+  const conversations = await readAllConversations();
+  const periodStart = getPeriodStart(period ?? '30days');
+  const now = new Date();
+
+  // Filter conversations that have messages in the period
+  const relevantConvs = conversations.filter((c) =>
+    c.messages.some((m) => new Date(m.timestamp) >= periodStart),
+  );
+
+  // --- Hourly distribution ---
+  const hourlyMap = new Map<number, number>();
+  for (let h = 0; h < 24; h++) hourlyMap.set(h, 0);
+
+  for (const conv of relevantConvs) {
+    for (const msg of conv.messages) {
+      const d = new Date(msg.timestamp);
+      if (d >= periodStart) {
+        hourlyMap.set(d.getHours(), (hourlyMap.get(d.getHours()) ?? 0) + 1);
+      }
+    }
+  }
+
+  const hourly_distribution: HourlyData[] = [];
+  for (let h = 0; h < 24; h++) {
+    hourly_distribution.push({ hour: h, count: hourlyMap.get(h) ?? 0 });
+  }
+
+  // --- Daily distribution (by day of week) ---
+  const dailyMap = new Map<number, number>();
+  for (let d = 0; d < 7; d++) dailyMap.set(d, 0);
+
+  for (const conv of relevantConvs) {
+    for (const msg of conv.messages) {
+      const d = new Date(msg.timestamp);
+      if (d >= periodStart) {
+        dailyMap.set(d.getDay(), (dailyMap.get(d.getDay()) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Order: seg, ter, qua, qui, sex, sab, dom
+  const dayOrder = [1, 2, 3, 4, 5, 6, 0];
+  const daily_distribution: DailyData[] = dayOrder.map((d) => ({
+    day: DAY_NAMES[d],
+    count: dailyMap.get(d) ?? 0,
+  }));
+
+  // --- Tag ranking ---
+  const tagCountMap = new Map<string, number>();
+  for (const conv of relevantConvs) {
+    const tags = detectTags(conv.messages);
+    for (const tag of tags) {
+      tagCountMap.set(tag, (tagCountMap.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const tag_ranking: TagCount[] = Array.from(tagCountMap.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // --- Average first response time ---
+  let totalFirstResponse = 0;
+  let firstResponseCount = 0;
+
+  for (const conv of relevantConvs) {
+    const firstClient = conv.messages.find((m) => m.role === 'client');
+    if (!firstClient) continue;
+    const firstAgent = conv.messages.find(
+      (m) => m.role === 'agent' && new Date(m.timestamp) > new Date(firstClient.timestamp),
+    );
+    if (!firstAgent) continue;
+    const diff = (new Date(firstAgent.timestamp).getTime() - new Date(firstClient.timestamp).getTime()) / 1000;
+    if (diff > 0) {
+      totalFirstResponse += diff;
+      firstResponseCount++;
+    }
+  }
+
+  const avg_first_response_seconds = firstResponseCount > 0
+    ? Math.round(totalFirstResponse / firstResponseCount)
+    : 0;
+
+  // --- Finished rate ---
+  const finishedCount = relevantConvs.filter((c) => c.status === 'finished').length;
+  const finished_rate = relevantConvs.length > 0
+    ? Math.round((finishedCount / relevantConvs.length) * 100) / 100
+    : 0;
+
+  // --- Abandoned rate (active conversations with no agent reply in 24h+) ---
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const activeConvs = relevantConvs.filter((c) => c.status === 'active');
+  let abandonedCount = 0;
+
+  for (const conv of activeConvs) {
+    const lastAgentMsg = [...conv.messages].reverse().find((m) => m.role === 'agent');
+    const lastClientMsg = [...conv.messages].reverse().find((m) => m.role === 'client');
+
+    if (!lastAgentMsg && lastClientMsg) {
+      // No agent reply at all — abandoned if last client message is older than 24h
+      if (new Date(lastClientMsg.timestamp) < twentyFourHoursAgo) {
+        abandonedCount++;
+      }
+    } else if (lastAgentMsg && lastClientMsg) {
+      // If last client message is after last agent message and older than 24h
+      if (
+        new Date(lastClientMsg.timestamp) > new Date(lastAgentMsg.timestamp) &&
+        new Date(lastClientMsg.timestamp) < twentyFourHoursAgo
+      ) {
+        abandonedCount++;
+      }
+    }
+  }
+
+  const abandoned_rate = relevantConvs.length > 0
+    ? Math.round((abandonedCount / relevantConvs.length) * 100) / 100
+    : 0;
+
+  // --- Daily trend (last 30 days) ---
+  const trendStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  trendStart.setDate(trendStart.getDate() - 29);
+
+  const trendMap = new Map<string, number>();
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(trendStart);
+    d.setDate(d.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    trendMap.set(key, 0);
+  }
+
+  for (const conv of conversations) {
+    // Count conversations by the date of their first message
+    const firstMsgDate = new Date(conv.first_message_at);
+    const key = firstMsgDate.toISOString().slice(0, 10);
+    if (trendMap.has(key)) {
+      trendMap.set(key, (trendMap.get(key) ?? 0) + 1);
+    }
+  }
+
+  const daily_trend: DailyTrend[] = Array.from(trendMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
+  return {
+    hourly_distribution,
+    daily_distribution,
+    tag_ranking,
+    avg_first_response_seconds,
+    finished_rate,
+    abandoned_rate,
+    daily_trend,
+  };
+}
+
+/**
+ * Exports conversation data as a CSV string.
+ * @param period - Optional period filter.
+ * @returns A CSV string with conversation data.
+ */
+export async function exportConversationsCSV(period?: 'today' | '7days' | '30days'): Promise<string> {
+  let conversations = await readAllConversations();
+
+  if (period) {
+    const periodStart = getPeriodStart(period);
+    conversations = conversations.filter((c) =>
+      c.messages.some((m) => new Date(m.timestamp) >= periodStart),
+    );
+  }
+
+  const header = 'conversation_id,name,status,messages_count,tags,satisfaction_score,first_message_at,last_message_at';
+  const rows = conversations.map((c) => {
+    const tags = detectTags(c.messages).join(';');
+    const score = calculateSatisfactionScore(c.messages);
+    const escapedName = `"${c.name.replace(/"/g, '""')}"`;
+    const escapedTags = `"${tags.replace(/"/g, '""')}"`;
+    return `${c.conversation_id},${escapedName},${c.status},${c.messages.length},${escapedTags},${score},${c.first_message_at},${c.last_message_at}`;
+  });
+
+  return [header, ...rows].join('\n');
 }

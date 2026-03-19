@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Metrics } from '../types';
+import { getAuthHeaders } from '../hooks/useAuth';
 
 function formatResponseTime(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -16,7 +17,7 @@ export function MetricsBar() {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const res = await fetch('/api/metrics');
+      const res = await fetch('/api/metrics', { headers: getAuthHeaders() });
       if (!res.ok) return;
       const data = (await res.json()) as Metrics;
       setMetrics(data);

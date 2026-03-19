@@ -15,6 +15,8 @@ export interface Conversation {
   last_message_at: string;
   status: 'active' | 'finished';
   first_message_at: string;
+  tags: string[];
+  satisfaction_score: number;
 }
 
 /** Lightweight summary used in the conversation list endpoint. */
@@ -26,6 +28,8 @@ export interface ConversationSummary {
   last_message_at: string;
   status: 'active' | 'finished';
   unread_count: number;
+  tags: string[];
+  satisfaction_score: number;
 }
 
 /** A single search result returned by the search endpoint. */
@@ -49,6 +53,41 @@ export interface ConversationFilters {
   status?: string;
   search?: string;
   period?: 'today' | '7days' | '30days';
+}
+
+/** Hourly distribution data point. */
+export interface HourlyData {
+  hour: number;
+  count: number;
+}
+
+/** Daily distribution data point. */
+export interface DailyData {
+  day: string;
+  count: number;
+}
+
+/** Tag occurrence count. */
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+/** Daily trend data point. */
+export interface DailyTrend {
+  date: string;
+  count: number;
+}
+
+/** Full analytics response. */
+export interface Analytics {
+  hourly_distribution: HourlyData[];
+  daily_distribution: DailyData[];
+  tag_ranking: TagCount[];
+  avg_first_response_seconds: number;
+  finished_rate: number;
+  abandoned_rate: number;
+  daily_trend: DailyTrend[];
 }
 
 /** WebSocket event types sent by the server. */

@@ -176,7 +176,38 @@ export function ChatWindow({ conversation, connected, onFinish, onBack, showBack
                   Dura\u00e7\u00e3o: {formatDuration(conversation.first_message_at, conversation.last_message_at)}
                 </span>
               )}
+              {typeof conversation.satisfaction_score === 'number' && (
+                <span className={`hidden sm:inline font-medium ${
+                  conversation.satisfaction_score >= 70 ? 'dark:text-emerald-400 text-emerald-600' :
+                  conversation.satisfaction_score >= 40 ? 'dark:text-amber-400 text-amber-600' :
+                  'dark:text-red-400 text-red-600'
+                }`}>
+                  Satisf: {conversation.satisfaction_score}%
+                </span>
+              )}
             </div>
+            {/* Tags */}
+            {conversation.tags && conversation.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {conversation.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className={`inline-block px-1.5 py-0.5 text-[9px] font-medium rounded
+                      ${tag === 'Risco de churn'
+                        ? 'dark:bg-red-500/20 dark:text-red-400 bg-red-50 text-red-600'
+                        : tag === 'Urgente'
+                        ? 'dark:bg-amber-500/20 dark:text-amber-400 bg-amber-50 text-amber-600'
+                        : tag === 'Elogio'
+                        ? 'dark:bg-emerald-500/20 dark:text-emerald-400 bg-emerald-50 text-emerald-600'
+                        : 'dark:bg-zinc-700/50 dark:text-zinc-400 bg-zinc-100 text-zinc-500'
+                      }
+                    `}
+                  >
+                    {tag === 'Risco de churn' && '\u26A0 '}{tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">

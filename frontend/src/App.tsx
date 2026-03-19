@@ -3,20 +3,31 @@ import type { Conversation, ConversationSummary, Message } from './types';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useTheme } from './hooks/useTheme';
 import { playNotificationSound } from './hooks/useSound';
+import { useAuth, getAuthHeaders } from './hooks/useAuth';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useNotifications } from './hooks/useNotifications';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { MetricsBar } from './components/MetricsBar';
 import { ChatWindow } from './components/ChatWindow';
+import { LoginPage } from './components/LoginPage';
+import { AnalyticsPage } from './components/AnalyticsPage';
 
 function messageKey(msg: Message): string {
   return `${msg.conversation_id}:${msg.timestamp}:${msg.message}`;
 }
 
 function App() {
+  const { isAuthenticated, authRequired, loading: authLoading, login, logout } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    const saved = localStorage.getItem('painel_sound');
+    return saved !== 'false';
+  });
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('');
@@ -25,14 +36,26 @@ function App() {
 
   const { connected, lastMessage } = useWebSocket();
   const { theme, toggleTheme } = useTheme();
+  const { notify, requestPermission } = useNotifications();
 
   const lastProcessedRef = useRef<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const fetchAbortRef = useRef<AbortController | null>(null);
 
+  // Request notification permission on first auth
+  useEffect(() => {
+    if (isAuthenticated) {
+      void requestPermission();
+    }
+  }, [isAuthenticated, requestPermission]);
+
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    localStorage.setItem('painel_sound', String(soundEnabled));
+  }, [soundEnabled]);
 
   const activeCount = conversations.filter((c) => c.status === 'active').length;
 
@@ -45,7 +68,7 @@ function App() {
       if (periodFilter) params.set('period', periodFilter);
       const qs = params.toString();
       const url = qs ? `/api/conversations?${qs}` : '/api/conversations';
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getAuthHeaders() });
       if (!res.ok) return;
       const data = (await res.json()) as ConversationSummary[];
       setConversations(data);
@@ -65,6 +88,7 @@ function App() {
     try {
       const res = await fetch(`/api/conversations/${id}`, {
         signal: controller.signal,
+        headers: getAuthHeaders(),
       });
       if (!res.ok) return;
       const data = (await res.json()) as Conversation;
@@ -79,9 +103,11 @@ function App() {
   /** Finish a conversation */
   const handleFinish = useCallback(async (id: string) => {
     try {
-      const res = await fetch(`/api/conversations/${id}/finish`, { method: 'PATCH' });
+      const res = await fetch(`/api/conversations/${id}/finish`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+      });
       if (!res.ok) return;
-      // Refresh
       setActiveConversation((prev) => prev ? { ...prev, status: 'finished' } : prev);
       setConversations((prev) =>
         prev.map((c) => (c.id === id ? { ...c, status: 'finished' as const } : c))
@@ -93,8 +119,10 @@ function App() {
 
   // Load conversations on mount and when filters change
   useEffect(() => {
-    void fetchConversations();
-  }, [fetchConversations]);
+    if (isAuthenticated) {
+      void fetchConversations();
+    }
+  }, [fetchConversations, isAuthenticated]);
 
   // Handle WebSocket new_message events
   useEffect(() => {
@@ -105,8 +133,13 @@ function App() {
     lastProcessedRef.current = key;
 
     // Play notification sound for client messages
-    if (lastMessage.role === 'client') {
+    if (lastMessage.role === 'client' && soundEnabled) {
       playNotificationSound();
+    }
+
+    // Browser notification
+    if (lastMessage.role === 'client') {
+      notify(`Nova mensagem de ${lastMessage.name}`, lastMessage.message);
     }
 
     // Update conversation list
@@ -134,6 +167,8 @@ function App() {
         last_message_at: lastMessage.timestamp,
         status: 'active',
         unread_count: lastMessage.conversation_id !== selectedIdRef.current ? 1 : 0,
+        tags: [],
+        satisfaction_score: 50,
       };
       return [newSummary, ...prev];
     });
@@ -153,13 +188,14 @@ function App() {
         };
       });
     }
-  }, [lastMessage]);
+  }, [lastMessage, soundEnabled, notify]);
 
   /** Handle conversation selection */
   const handleSelect = useCallback(
     (id: string) => {
       setSelectedId(id);
       setSidebarOpen(false);
+      setShowAnalytics(false);
       void fetchConversation(id);
       // Clear unread count
       setConversations((prev) =>
@@ -174,6 +210,46 @@ function App() {
     setActiveConversation(null);
   }, []);
 
+  // Keyboard shortcuts
+  const handleNext = useCallback(() => {
+    if (conversations.length === 0) return;
+    const currentIdx = conversations.findIndex((c) => c.id === selectedIdRef.current);
+    const nextIdx = currentIdx < conversations.length - 1 ? currentIdx + 1 : 0;
+    handleSelect(conversations[nextIdx].id);
+  }, [conversations, handleSelect]);
+
+  const handlePrevious = useCallback(() => {
+    if (conversations.length === 0) return;
+    const currentIdx = conversations.findIndex((c) => c.id === selectedIdRef.current);
+    const prevIdx = currentIdx > 0 ? currentIdx - 1 : conversations.length - 1;
+    handleSelect(conversations[prevIdx].id);
+  }, [conversations, handleSelect]);
+
+  const toggleAnalytics = useCallback(() => {
+    setShowAnalytics((prev) => !prev);
+  }, []);
+
+  useKeyboardShortcuts({
+    onNext: handleNext,
+    onPrevious: handlePrevious,
+    onEscape: handleBack,
+    onAnalytics: toggleAnalytics,
+  });
+
+  // Auth loading state
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen dark:bg-zinc-900 bg-gray-50">
+        <div className="animate-pulse dark:text-zinc-500 text-zinc-400 text-sm">Carregando...</div>
+      </div>
+    );
+  }
+
+  // Login page
+  if (authRequired && !isAuthenticated) {
+    return <LoginPage onLogin={login} />;
+  }
+
   return (
     <div className="flex flex-col h-screen dark:bg-zinc-900 bg-gray-50 dark:text-zinc-100 text-zinc-900 transition-colors duration-200">
       {/* Header */}
@@ -183,6 +259,10 @@ function App() {
         onToggleTheme={toggleTheme}
         activeCount={activeCount}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+        onToggleAnalytics={toggleAnalytics}
+        onToggleSound={() => setSoundEnabled((prev) => !prev)}
+        soundEnabled={soundEnabled}
+        onLogout={authRequired ? logout : undefined}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -232,14 +312,20 @@ function App() {
 
         {/* Main area */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          <MetricsBar />
-          <ChatWindow
-            conversation={activeConversation}
-            connected={connected}
-            onFinish={handleFinish}
-            onBack={handleBack}
-            showBack={!!selectedId}
-          />
+          {showAnalytics ? (
+            <AnalyticsPage onBack={() => setShowAnalytics(false)} />
+          ) : (
+            <>
+              <MetricsBar />
+              <ChatWindow
+                conversation={activeConversation}
+                connected={connected}
+                onFinish={handleFinish}
+                onBack={handleBack}
+                showBack={!!selectedId}
+              />
+            </>
+          )}
         </main>
       </div>
     </div>
