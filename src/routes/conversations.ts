@@ -1,5 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { getConversations, getConversationById } from '../services/storage.js';
+import {
+  getConversations,
+  getConversationById,
+  finishConversation,
+} from '../services/storage.js';
+import type { ConversationFilters } from '../types/index.js';
 
 const paramsSchema = {
   type: 'object',
@@ -9,26 +14,52 @@ const paramsSchema = {
   },
 } as const;
 
+const conversationQuerySchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['active', 'finished'] },
+    search: { type: 'string', minLength: 1, maxLength: 200 },
+    period: { type: 'string', enum: ['today', '7days', '30days'] },
+  },
+  additionalProperties: false,
+} as const;
+
 /**
  * Registers conversation-related routes.
  *
- * - GET /api/conversations       — list all conversations with summary info
- * - GET /api/conversations/:id   — get a single conversation with all messages
+ * - GET   /api/conversations              — list all conversations with summary info
+ * - GET   /api/conversations/:id          — get a single conversation with all messages
+ * - PATCH /api/conversations/:id/finish   — mark conversation as finished
+ * - GET   /api/conversations/:id/export   — export conversation as plain text
  */
 export async function conversationRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * GET /api/conversations
    * Returns a list of conversation summaries sorted by most recent message.
+   * Accepts optional query filters: status, search, period.
    */
-  fastify.get('/conversations', async (_request, reply) => {
-    try {
-      const summaries = await getConversations();
-      return reply.send(summaries);
-    } catch (err) {
-      fastify.log.error(err);
-      return reply.status(500).send({ error: 'Erro interno do servidor' });
-    }
-  });
+  fastify.get<{ Querystring: ConversationFilters }>(
+    '/conversations',
+    {
+      schema: {
+        querystring: conversationQuerySchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const filters: ConversationFilters = {
+          status: request.query.status,
+          search: request.query.search,
+          period: request.query.period,
+        };
+        const summaries = await getConversations(filters);
+        return reply.send(summaries);
+      } catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Erro interno do servidor' });
+      }
+    },
+  );
 
   /**
    * GET /api/conversations/:id
@@ -49,6 +80,82 @@ export async function conversationRoutes(fastify: FastifyInstance): Promise<void
           return reply.status(404).send({ error: 'Conversa não encontrada' });
         }
         return reply.send(conversation);
+      } catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Erro interno do servidor' });
+      }
+    },
+  );
+
+  /**
+   * PATCH /api/conversations/:id/finish
+   * Marks a conversation as finished.
+   * Returns the updated conversation or 404 if not found.
+   */
+  fastify.patch<{ Params: { id: string } }>(
+    '/conversations/:id/finish',
+    {
+      schema: {
+        params: paramsSchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const updated = await finishConversation(request.params.id);
+        if (!updated) {
+          return reply.status(404).send({ error: 'Conversa não encontrada' });
+        }
+        const conversation = await getConversationById(request.params.id);
+        return reply.send(conversation);
+      } catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Erro interno do servidor' });
+      }
+    },
+  );
+
+  /**
+   * GET /api/conversations/:id/export
+   * Returns the conversation as a plain text download file.
+   */
+  fastify.get<{ Params: { id: string } }>(
+    '/conversations/:id/export',
+    {
+      schema: {
+        params: paramsSchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const conversation = await getConversationById(request.params.id);
+        if (!conversation) {
+          return reply.status(404).send({ error: 'Conversa não encontrada' });
+        }
+
+        const lines: string[] = [
+          `Conversa: ${conversation.name}`,
+          `ID: ${conversation.conversation_id}`,
+          `Status: ${conversation.status}`,
+          `Início: ${conversation.first_message_at}`,
+          `Última mensagem: ${conversation.last_message_at}`,
+          '',
+          '--- Mensagens ---',
+          '',
+        ];
+
+        for (const msg of conversation.messages) {
+          const roleLabel = msg.role === 'client' ? msg.name : 'Agente';
+          lines.push(`[${msg.timestamp}] ${roleLabel}: ${msg.message}`);
+        }
+
+        const text = lines.join('\n');
+        const safeId = conversation.conversation_id.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filename = `conversa-${safeId}.txt`;
+
+        return reply
+          .header('Content-Type', 'text/plain; charset=utf-8')
+          .header('Content-Disposition', `attachment; filename="${filename}"`)
+          .send(text);
       } catch (err) {
         fastify.log.error(err);
         return reply.status(500).send({ error: 'Erro interno do servidor' });

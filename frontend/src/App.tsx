@@ -1,59 +1,61 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Conversation, ConversationSummary, Message } from './types';
 import { useWebSocket } from './hooks/useWebSocket';
-import { ConversationList } from './components/ConversationList';
+import { useTheme } from './hooks/useTheme';
+import { playNotificationSound } from './hooks/useSound';
+import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { MetricsBar } from './components/MetricsBar';
 import { ChatWindow } from './components/ChatWindow';
 
-/**
- * Creates a unique key for a message to prevent duplicate processing.
- */
 function messageKey(msg: Message): string {
   return `${msg.conversation_id}:${msg.timestamp}:${msg.message}`;
 }
 
-/**
- * Root application component. Manages conversation state, fetches data from the
- * API, and integrates real-time WebSocket updates.
- */
 function App() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Filters
+  const [statusFilter, setStatusFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [periodFilter, setPeriodFilter] = useState('today');
 
   const { connected, lastMessage } = useWebSocket();
+  const { theme, toggleTheme } = useTheme();
 
-  // Track last processed message to avoid duplicates on re-renders
   const lastProcessedRef = useRef<string | null>(null);
-  // Track selected ID in a ref for the WebSocket effect
   const selectedIdRef = useRef<string | null>(null);
-  // AbortController for conversation fetch race condition
   const fetchAbortRef = useRef<AbortController | null>(null);
 
-  // Keep the ref in sync
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  /** Fetch the conversation list from the API. */
+  const activeCount = conversations.filter((c) => c.status === 'active').length;
+
+  /** Fetch conversations with current filters */
   const fetchConversations = useCallback(async () => {
     try {
-      const res = await fetch('/api/conversations');
-      if (!res.ok) {
-        setError('Falha ao carregar conversas');
-        return;
-      }
+      const params = new URLSearchParams();
+      if (statusFilter) params.set('status', statusFilter);
+      if (searchQuery) params.set('search', searchQuery);
+      if (periodFilter) params.set('period', periodFilter);
+      const qs = params.toString();
+      const url = qs ? `/api/conversations?${qs}` : '/api/conversations';
+      const res = await fetch(url);
+      if (!res.ok) return;
       const data = (await res.json()) as ConversationSummary[];
       setConversations(data);
-      setError(null);
     } catch {
-      setError('Servidor indisponível');
+      // silently fail
     }
-  }, []);
+  }, [statusFilter, searchQuery, periodFilter]);
 
-  /** Fetch a single conversation's full messages. */
+  /** Fetch a single conversation */
   const fetchConversation = useCallback(async (id: string) => {
-    // Abort any in-flight request to prevent race conditions
     if (fetchAbortRef.current) {
       fetchAbortRef.current.abort();
     }
@@ -66,17 +68,30 @@ function App() {
       });
       if (!res.ok) return;
       const data = (await res.json()) as Conversation;
-      // Only update if this request wasn't aborted
       if (!controller.signal.aborted) {
         setActiveConversation(data);
       }
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      // Silently fail — user can retry by re-selecting
     }
   }, []);
 
-  // Load conversation list on mount
+  /** Finish a conversation */
+  const handleFinish = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/conversations/${id}/finish`, { method: 'PATCH' });
+      if (!res.ok) return;
+      // Refresh
+      setActiveConversation((prev) => prev ? { ...prev, status: 'finished' } : prev);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, status: 'finished' as const } : c))
+      );
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  // Load conversations on mount and when filters change
   useEffect(() => {
     void fetchConversations();
   }, [fetchConversations]);
@@ -85,12 +100,16 @@ function App() {
   useEffect(() => {
     if (!lastMessage) return;
 
-    // Deduplicate: skip if already processed
     const key = messageKey(lastMessage);
     if (lastProcessedRef.current === key) return;
     lastProcessedRef.current = key;
 
-    // Update conversation list: move the affected conversation to the top
+    // Play notification sound for client messages
+    if (lastMessage.role === 'client') {
+      playNotificationSound();
+    }
+
+    // Update conversation list
     setConversations((prev) => {
       const existingIdx = prev.findIndex(
         (c) => c.id === lastMessage.conversation_id
@@ -101,16 +120,20 @@ function App() {
         updated.last_message = lastMessage.message;
         updated.last_message_at = lastMessage.timestamp;
         updated.message_count += 1;
+        if (lastMessage.role === 'client' && lastMessage.conversation_id !== selectedIdRef.current) {
+          updated.unread_count += 1;
+        }
         return [updated, ...prev.filter((_, i) => i !== existingIdx)];
       }
 
-      // New conversation — add it to the top
       const newSummary: ConversationSummary = {
         id: lastMessage.conversation_id,
         name: lastMessage.name,
         last_message: lastMessage.message,
         message_count: 1,
         last_message_at: lastMessage.timestamp,
+        status: 'active',
+        unread_count: lastMessage.conversation_id !== selectedIdRef.current ? 1 : 0,
       };
       return [newSummary, ...prev];
     });
@@ -119,7 +142,6 @@ function App() {
     if (lastMessage.conversation_id === selectedIdRef.current) {
       setActiveConversation((prev) => {
         if (!prev) return prev;
-        // Deduplicate within the conversation
         const exists = prev.messages.some(
           (m) => m.timestamp === lastMessage.timestamp && m.message === lastMessage.message
         );
@@ -133,69 +155,93 @@ function App() {
     }
   }, [lastMessage]);
 
-  /** Handle conversation selection from the sidebar. */
+  /** Handle conversation selection */
   const handleSelect = useCallback(
     (id: string) => {
       setSelectedId(id);
+      setSidebarOpen(false);
       void fetchConversation(id);
+      // Clear unread count
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, unread_count: 0 } : c))
+      );
     },
     [fetchConversation]
   );
 
+  const handleBack = useCallback(() => {
+    setSelectedId(null);
+    setActiveConversation(null);
+  }, []);
+
   return (
-    <div className="flex h-screen bg-zinc-900 text-zinc-100">
-      {/* Sidebar */}
-      <aside className="hidden sm:flex w-[300px] min-w-[300px] flex-col border-r border-zinc-700/50 bg-zinc-950">
-        <div className="px-4 pt-5 pb-4 shrink-0">
-          <h1 className="text-lg font-bold text-indigo-400">
-            Painel de Atendimentos
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Monitoramento em tempo real
-          </p>
-        </div>
-        <div className="border-t border-zinc-700/50" />
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-        />
-      </aside>
+    <div className="flex flex-col h-screen dark:bg-zinc-900 bg-gray-50 dark:text-zinc-100 text-zinc-900 transition-colors duration-200">
+      {/* Header */}
+      <Header
+        connected={connected}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        activeCount={activeCount}
+        onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+      />
 
-      {/* Mobile sidebar */}
-      <aside className="flex sm:hidden w-full flex-col border-r border-zinc-700/50 bg-zinc-950"
-        style={{ display: selectedId ? 'none' : undefined }}
-      >
-        <div className="px-4 pt-5 pb-4 shrink-0">
-          <h1 className="text-lg font-bold text-indigo-400">
-            Painel de Atendimentos
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Monitoramento em tempo real
-          </p>
-        </div>
-        <div className="border-t border-zinc-700/50" />
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-        />
-      </aside>
+      <div className="flex flex-1 overflow-hidden">
+        {/* Desktop Sidebar */}
+        <aside className="hidden lg:flex w-[320px] min-w-[320px] flex-col border-r
+          dark:border-zinc-800 dark:bg-zinc-950 border-zinc-200 bg-white
+          transition-colors duration-200">
+          <Sidebar
+            conversations={conversations}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            periodFilter={periodFilter}
+            onPeriodFilterChange={setPeriodFilter}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+        </aside>
 
-      {/* Main chat area */}
-      <main className={`flex-1 flex flex-col ${selectedId ? '' : 'hidden sm:flex'}`}>
-        {error && !connected && (
-          <div className="px-4 py-2 bg-red-900/30 text-red-400 text-xs text-center shrink-0">
-            {error}
-          </div>
+        {/* Mobile sidebar overlay */}
+        {sidebarOpen && (
+          <>
+            <div
+              className="lg:hidden fixed inset-0 bg-black/50 z-40"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <aside className="lg:hidden fixed inset-y-0 left-0 w-[320px] z-50 flex flex-col
+              dark:bg-zinc-950 bg-white
+              shadow-2xl transition-colors duration-200"
+              style={{ top: '56px' }}
+            >
+              <Sidebar
+                conversations={conversations}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                periodFilter={periodFilter}
+                onPeriodFilterChange={setPeriodFilter}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+              />
+            </aside>
+          </>
         )}
-        <ChatWindow
-          conversation={activeConversation}
-          connected={connected}
-          onBack={() => setSelectedId(null)}
-          showBack={!!selectedId}
-        />
-      </main>
+
+        {/* Main area */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <MetricsBar />
+          <ChatWindow
+            conversation={activeConversation}
+            connected={connected}
+            onFinish={handleFinish}
+            onBack={handleBack}
+            showBack={!!selectedId}
+          />
+        </main>
+      </div>
     </div>
   );
 }

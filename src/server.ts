@@ -6,6 +6,8 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { messageRoutes } from './routes/messages.js';
 import { conversationRoutes } from './routes/conversations.js';
+import { searchRoutes } from './routes/search.js';
+import { metricsRoutes } from './routes/metrics.js';
 import { websocketRoutes } from './routes/websocket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,7 +27,7 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
 async function start(): Promise<void> {
   await fastify.register(cors, {
     origin: allowedOrigins,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH'],
   });
   await fastify.register(websocket);
 
@@ -64,6 +66,8 @@ async function start(): Promise<void> {
 
   await fastify.register(messageRoutes, { prefix: '/api' });
   await fastify.register(conversationRoutes, { prefix: '/api' });
+  await fastify.register(searchRoutes, { prefix: '/api' });
+  await fastify.register(metricsRoutes, { prefix: '/api' });
   await fastify.register(websocketRoutes);
 
   const port = Number(process.env.PORT) || 3001;

@@ -31,9 +31,9 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       try {
-        const saved = await addMessage(request.body);
-        broadcast(saved);
-        return reply.status(201).send(saved);
+        const result = await addMessage(request.body);
+        broadcast(result.message, result.conversation_id, result.unread_count);
+        return reply.status(201).send(result.message);
       } catch (err) {
         fastify.log.error(err);
         return reply.status(500).send({ error: 'Erro interno do servidor' });

@@ -16,10 +16,16 @@ export function addClient(socket: WebSocket): void {
 
 /**
  * Broadcasts a message event to every connected WebSocket client.
+ * Includes the conversation_id and the updated unread_count for that conversation.
  * Catches individual send errors to avoid breaking the broadcast loop.
  */
-export function broadcast(msg: Message): void {
-  const payload = JSON.stringify({ type: 'new_message', data: msg });
+export function broadcast(msg: Message, conversationId: string, unreadCount: number): void {
+  const payload = JSON.stringify({
+    type: 'new_message',
+    data: msg,
+    conversation_id: conversationId,
+    unread_count: unreadCount,
+  });
   for (const client of clients) {
     if (client.readyState === client.OPEN) {
       try {
