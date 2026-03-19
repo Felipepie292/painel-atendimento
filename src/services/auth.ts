@@ -3,8 +3,11 @@ import { createHmac, randomBytes } from 'node:crypto';
 /** Secret used for HMAC token generation. Random per process start. */
 const TOKEN_SECRET = randomBytes(32).toString('hex');
 
-/** Set of currently valid session tokens. */
-const activeTokens = new Set<string>();
+/** Token expiration time in milliseconds (30 minutes). */
+const TOKEN_TTL_MS = 30 * 60 * 1000;
+
+/** Map of active tokens to their creation timestamp. */
+const activeTokens = new Map<string, number>();
 
 /**
  * Returns the panel password, read lazily so dotenv has time to load.
@@ -34,23 +37,32 @@ export function validatePassword(password: string): boolean {
 
 /**
  * Generates a new session token using HMAC of timestamp + random bytes.
- * The token is stored in the active tokens set.
+ * The token is stored with a creation timestamp for expiration.
  * @returns The generated token string.
  */
 export function generateToken(): string {
   const payload = `${Date.now()}-${randomBytes(16).toString('hex')}`;
   const token = createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  activeTokens.add(token);
+  activeTokens.set(token, Date.now());
   return token;
 }
 
 /**
- * Validates whether a token is currently active.
+ * Validates whether a token is currently active and not expired.
+ * Expired tokens are automatically removed.
  * @param token - The token to validate.
- * @returns true if the token is in the active set.
+ * @returns true if the token is valid and not expired.
  */
 export function validateToken(token: string): boolean {
-  return activeTokens.has(token);
+  const createdAt = activeTokens.get(token);
+  if (createdAt === undefined) return false;
+
+  if (Date.now() - createdAt > TOKEN_TTL_MS) {
+    activeTokens.delete(token);
+    return false;
+  }
+
+  return true;
 }
 
 /**
