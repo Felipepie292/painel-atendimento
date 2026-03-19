@@ -1,0 +1,23 @@
+services:
+  painel:
+    build: .
+    container_name: painel-atendimento
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - painel-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - API_KEY=${API_KEY:-}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3001}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  painel-data:
