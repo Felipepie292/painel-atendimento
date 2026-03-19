@@ -26,7 +26,10 @@ export function useAuth() {
           localStorage.removeItem(TOKEN_KEY);
         }
       } catch {
-        setAuthRequired(false);
+        // If the API is unreachable, assume auth is required for safety
+        setAuthRequired(true);
+        setToken(null);
+        localStorage.removeItem(TOKEN_KEY);
       } finally {
         setLoading(false);
       }
