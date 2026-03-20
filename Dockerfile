@@ -17,7 +17,7 @@ COPY src/ ./src/
 COPY frontend/ ./frontend/
 
 # Build backend (TypeScript -> JS) and frontend (Vite)
-RUN npm run build
+RUN npx tsc && cd frontend && npm run build
 
 # --- Stage 2: Production ---
 FROM node:22-alpine AS production
