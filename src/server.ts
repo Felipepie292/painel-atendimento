@@ -19,10 +19,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const fastify = Fastify({ logger: true });
 
-/** Allowed CORS origins. Configurable via CORS_ORIGIN env var. */
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map((o) => o.trim());
+/** Allowed CORS origins. In production same-origin serves everything; use true as fallback. */
+const corsOriginEnv = process.env.CORS_ORIGIN;
+const allowedOrigins: string[] | boolean = corsOriginEnv
+  ? corsOriginEnv.split(',').map((o) => o.trim())
+  : true;
 
 /**
  * Bootstraps and starts the Fastify server.
