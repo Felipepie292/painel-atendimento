@@ -27,11 +27,11 @@ export function DateSeparator({ date }: DateSeparatorProps) {
 
   return (
     <div className="flex items-center gap-3 my-4">
-      <div className="flex-1 h-px bg-zinc-700/50 dark:bg-zinc-700/50 light-separator" />
-      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-500 shrink-0 uppercase tracking-wider">
+      <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border-default)' }} />
+      <span className="text-[11px] font-medium shrink-0 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </span>
-      <div className="flex-1 h-px bg-zinc-700/50 dark:bg-zinc-700/50 light-separator" />
+      <div className="flex-1 h-px" style={{ backgroundColor: 'var(--border-default)' }} />
     </div>
   );
 }
