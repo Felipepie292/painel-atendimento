@@ -12,6 +12,7 @@ interface SidebarProps {
   onPeriodFilterChange: (period: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  keyboardIndex?: number;
 }
 
 const STATUS_TABS = [
@@ -37,11 +38,11 @@ export function Sidebar({
   onPeriodFilterChange,
   searchQuery,
   onSearchChange,
+  keyboardIndex = -1,
 }: SidebarProps) {
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -60,16 +61,17 @@ export function Sidebar({
   );
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-elevated)' }}>
       {/* Search */}
       <div className="px-3 pt-3 pb-2 shrink-0">
         <div className="relative">
           <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 dark:text-zinc-500 text-zinc-400 pointer-events-none"
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
-            strokeWidth={1.5}
+            strokeWidth={2}
+            style={{ color: 'var(--text-tertiary)' }}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
@@ -78,44 +80,73 @@ export function Sidebar({
             placeholder="Buscar conversas..."
             value={localSearch}
             onChange={(e) => handleSearchInput(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border
-              dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100 dark:placeholder-zinc-500
-              bg-gray-100 border-zinc-300 text-zinc-900 placeholder-zinc-400
-              focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40
-              transition-colors duration-200"
+            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg"
+            style={{
+              backgroundColor: 'var(--bg-subtle)',
+              border: '1px solid var(--border-default)',
+              color: 'var(--text-primary)',
+              outline: 'none',
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = 'var(--brand-500)';
+              e.target.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--brand-500) 15%, transparent)';
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = 'var(--border-default)';
+              e.target.style.boxShadow = 'none';
+            }}
           />
+          {localSearch && (
+            <button
+              onClick={() => handleSearchInput('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Filters */}
       <div className="px-3 pb-2 space-y-2 shrink-0">
-        {/* Status tabs */}
-        <div className="flex gap-1">
-          {STATUS_TABS.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => onStatusFilterChange(tab.value)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors duration-150
-                ${statusFilter === tab.value
-                  ? 'dark:bg-indigo-500/20 dark:text-indigo-400 bg-indigo-50 text-indigo-600'
-                  : 'dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 hover:bg-gray-100'
-                }
-              `}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Status pill tabs */}
+        <div
+          className="flex p-0.5 rounded-lg"
+          style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-default)' }}
+        >
+          {STATUS_TABS.map((tab) => {
+            const active = statusFilter === tab.value;
+            return (
+              <button
+                key={tab.value}
+                onClick={() => onStatusFilterChange(tab.value)}
+                className="flex-1 px-2 py-1 text-xs font-medium rounded-md transition-all duration-150"
+                style={{
+                  backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  boxShadow: active ? 'var(--shadow-sm)' : 'none',
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Period dropdown */}
+        {/* Period select */}
         <select
           value={periodFilter}
           onChange={(e) => onPeriodFilterChange(e.target.value)}
-          className="w-full px-2.5 py-1.5 text-xs rounded-lg border
-            dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300
-            bg-gray-100 border-zinc-300 text-zinc-700
-            focus:outline-none focus:ring-2 focus:ring-indigo-500/40
-            transition-colors duration-200 cursor-pointer"
+          className="w-full px-2.5 py-1.5 text-xs rounded-lg cursor-pointer"
+          style={{
+            backgroundColor: 'var(--bg-subtle)',
+            border: '1px solid var(--border-default)',
+            color: 'var(--text-secondary)',
+            outline: 'none',
+          }}
         >
           {PERIOD_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -126,13 +157,14 @@ export function Sidebar({
       </div>
 
       {/* Divider */}
-      <div className="dark:border-zinc-800 border-zinc-200 border-t mx-3" />
+      <div style={{ borderTop: '1px solid var(--border-default)' }} />
 
       {/* Conversation list */}
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
         onSelect={onSelect}
+        keyboardIndex={keyboardIndex}
       />
     </div>
   );

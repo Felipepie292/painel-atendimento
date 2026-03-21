@@ -1,17 +1,22 @@
 import type { WebSocket } from 'ws';
 import type { Message } from '../types/index.js';
 
-const clients = new Set<WebSocket>();
+/** Map of clientId → WebSocket for accurate connection tracking. */
+const clients = new Map<string, WebSocket>();
 
 /**
  * Registers a new WebSocket client for broadcasting.
- * Automatically removes the client when the socket closes.
+ * Returns the assigned clientId so the caller can remove it on close.
  */
-export function addClient(socket: WebSocket): void {
-  clients.add(socket);
-  socket.on('close', () => {
-    clients.delete(socket);
-  });
+export function addClient(socket: WebSocket, clientId: string): void {
+  clients.set(clientId, socket);
+}
+
+/**
+ * Removes a client from the broadcast pool.
+ */
+export function removeClient(clientId: string): void {
+  clients.delete(clientId);
 }
 
 /**
@@ -26,13 +31,13 @@ export function broadcast(msg: Message, conversationId: string, unreadCount: num
     conversation_id: conversationId,
     unread_count: unreadCount,
   });
-  for (const client of clients) {
+  for (const [id, client] of clients) {
     if (client.readyState === client.OPEN) {
-      try {
-        client.send(payload);
-      } catch {
-        // Client likely closing — will be cleaned up on 'close' event
-      }
+      client.send(payload, (err) => {
+        if (err) {
+          clients.delete(id);
+        }
+      });
     }
   }
 }

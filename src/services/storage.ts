@@ -29,6 +29,7 @@ interface StoredConversation {
   last_message_at: string;
   status: 'active' | 'finished';
   first_message_at: string;
+  notes?: string;
 }
 
 /** Simple promise-based mutex to serialize read-modify-write cycles. */
@@ -102,7 +103,24 @@ function enrichConversation(conv: StoredConversation): Conversation {
     ...conv,
     tags: detectTags(conv.messages),
     satisfaction_score: calculateSatisfactionScore(conv.messages),
+    notes: conv.notes,
   };
+}
+
+/**
+ * Saves or updates the operator notes for a conversation.
+ * Uses a mutex to prevent concurrent write race conditions.
+ * Returns true if the conversation was found and updated, false otherwise.
+ */
+export function saveNote(id: string, notes: string): Promise<boolean> {
+  return withLock(async () => {
+    const conversations = await readAllConversations();
+    const conversation = conversations.find((c) => c.conversation_id === id);
+    if (!conversation) return false;
+    conversation.notes = notes;
+    await writeConversations(conversations);
+    return true;
+  });
 }
 
 /**
@@ -488,9 +506,11 @@ export async function getAnalytics(period?: 'today' | '7days' | '30days'): Promi
 }
 
 /**
- * Exports conversation data as a CSV string.
+ * Exports conversation data as a CSV string with BOM UTF-8.
+ * Exports per-message rows for maximum detail.
+ * BOM (\uFEFF) ensures Excel opens the file with correct encoding.
  * @param period - Optional period filter.
- * @returns A CSV string with conversation data.
+ * @returns A CSV string (with BOM) ready for download.
  */
 export async function exportConversationsCSV(period?: 'today' | '7days' | '30days'): Promise<string> {
   let conversations = await readAllConversations();
@@ -502,14 +522,32 @@ export async function exportConversationsCSV(period?: 'today' | '7days' | '30day
     );
   }
 
-  const header = 'conversation_id,name,status,messages_count,tags,satisfaction_score,first_message_at,last_message_at';
-  const rows = conversations.map((c) => {
-    const tags = detectTags(c.messages).join(';');
-    const score = calculateSatisfactionScore(c.messages);
-    const escapedName = `"${c.name.replace(/"/g, '""')}"`;
-    const escapedTags = `"${tags.replace(/"/g, '""')}"`;
-    return `${c.conversation_id},${escapedName},${c.status},${c.messages.length},${escapedTags},${score},${c.first_message_at},${c.last_message_at}`;
-  });
+  const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
 
-  return [header, ...rows].join('\n');
+  const header = 'conversation_id,client_name,status,role,message,timestamp,tags,satisfaction_score,first_message_at,last_message_at';
+
+  const rows: string[] = [];
+  for (const c of conversations) {
+    const tags = detectTags(c.messages).join('; ');
+    const score = calculateSatisfactionScore(c.messages);
+    for (const msg of c.messages) {
+      rows.push(
+        [
+          esc(c.conversation_id),
+          esc(c.name),
+          c.status,
+          msg.role,
+          esc(msg.message),
+          msg.timestamp,
+          esc(tags),
+          score,
+          c.first_message_at,
+          c.last_message_at,
+        ].join(','),
+      );
+    }
+  }
+
+  // BOM UTF-8 (\uFEFF) for Excel compatibility
+  return '\uFEFF' + [header, ...rows].join('\r\n');
 }

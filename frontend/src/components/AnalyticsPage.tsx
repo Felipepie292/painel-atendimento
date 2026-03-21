@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import type { Analytics } from '../types';
 import { getAuthHeaders } from '../hooks/useAuth';
 
@@ -25,22 +26,31 @@ function BarChart({ data, labelKey, valueKey, color }: {
 
   return (
     <div className="space-y-1.5">
-      {data.map((item, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="text-[11px] dark:text-zinc-400 text-zinc-500 w-8 text-right shrink-0">
-            {item[labelKey]}
-          </span>
-          <div className="flex-1 h-5 dark:bg-zinc-800 bg-zinc-100 rounded overflow-hidden">
+      {data.map((item, i) => {
+        const pct = ((item[valueKey] as number) / maxVal) * 100;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-[11px] w-8 text-right shrink-0 tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
+              {item[labelKey]}
+            </span>
             <div
-              className={`h-full ${color} rounded transition-all duration-500`}
-              style={{ width: `${((item[valueKey] as number) / maxVal) * 100}%` }}
-            />
+              className="flex-1 h-5 rounded overflow-hidden"
+              style={{ backgroundColor: 'var(--bg-subtle)' }}
+            >
+              <motion.div
+                className="h-full rounded"
+                style={{ backgroundColor: color }}
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={{ duration: 0.5, delay: i * 0.03, ease: [0.16, 1, 0.3, 1] }}
+              />
+            </div>
+            <span className="text-[11px] w-6 shrink-0 tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+              {item[valueKey]}
+            </span>
           </div>
-          <span className="text-[11px] dark:text-zinc-400 text-zinc-500 w-8 shrink-0">
-            {item[valueKey]}
-          </span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -63,16 +73,76 @@ function TrendLine({ data }: { data: { date: string; count: number }[] }) {
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-32" preserveAspectRatio="none">
-      <polygon points={areaPoints} className="dark:fill-indigo-500/10 fill-indigo-500/15" />
+      <defs>
+        <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--brand-500)" stopOpacity="0.15" />
+          <stop offset="100%" stopColor="var(--brand-500)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={areaPoints} fill="url(#trendGrad)" />
       <polyline
         points={points}
         fill="none"
-        className="dark:stroke-indigo-400 stroke-indigo-500"
+        stroke="var(--brand-500)"
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  valueColor,
+  index,
+}: {
+  label: string;
+  value: string;
+  valueColor: string;
+  index: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: index * 0.05, ease: [0.16, 1, 0.3, 1] }}
+      className="rounded-xl p-4"
+      style={{
+        backgroundColor: 'var(--bg-elevated)',
+        border: '1px solid var(--border-default)',
+        boxShadow: 'var(--shadow-sm)',
+      }}
+    >
+      <div className="text-[11px] font-medium uppercase tracking-wide mb-2" style={{ color: 'var(--text-tertiary)' }}>
+        {label}
+      </div>
+      <div className="text-2xl font-bold tabular-nums" style={{ color: valueColor }}>
+        {value}
+      </div>
+    </motion.div>
+  );
+}
+
+function ChartCard({ title, children, index }: { title: string; children: React.ReactNode; index: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: index * 0.06, ease: [0.16, 1, 0.3, 1] }}
+      className="rounded-xl p-5"
+      style={{
+        backgroundColor: 'var(--bg-elevated)',
+        border: '1px solid var(--border-default)',
+        boxShadow: 'var(--shadow-sm)',
+      }}
+    >
+      <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+        {title}
+      </h3>
+      {children}
+    </motion.div>
   );
 }
 
@@ -84,190 +154,203 @@ export function AnalyticsPage({ onBack }: { onBack: () => void }) {
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/analytics?period=${period}`, {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) {
-        setAnalytics(await res.json());
-      }
+      const res = await fetch(`/api/analytics?period=${period}`, { headers: getAuthHeaders() });
+      if (res.ok) setAnalytics(await res.json());
     } catch { /* ignore */ }
     setLoading(false);
   }, [period]);
 
-  useEffect(() => {
-    void fetchAnalytics();
-  }, [fetchAnalytics]);
+  useEffect(() => { void fetchAnalytics(); }, [fetchAnalytics]);
 
   const handleExportCSV = useCallback(() => {
-    const url = `/api/export/csv?period=${period}`;
     const a = document.createElement('a');
-    a.href = url;
+    a.href = `/api/export/csv?period=${period}`;
     a.download = '';
     a.click();
   }, [period]);
 
   const handleExportReport = useCallback(() => {
-    const url = `/api/export/report?period=${period}`;
     const a = document.createElement('a');
-    a.href = url;
+    a.href = `/api/export/report?period=${period}`;
     a.download = '';
     a.click();
   }, [period]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 lg:p-6 dark:bg-zinc-900 bg-gray-50 h-0">
+    <div
+      className="flex-1 overflow-y-auto p-4 lg:p-6 h-0"
+      style={{ backgroundColor: 'var(--bg-base)' }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700
-              bg-gray-100 text-zinc-700 hover:bg-gray-200
-              transition-colors duration-150"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-default)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--text-primary)';
+              e.currentTarget.style.backgroundColor = 'var(--bg-subtle)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-secondary)';
+              e.currentTarget.style.backgroundColor = 'var(--bg-elevated)';
+            }}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
             Voltar
           </button>
-          <h2 className="text-lg font-bold dark:text-zinc-100 text-zinc-900">
+          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
             Analytics
           </h2>
         </div>
+
         <div className="flex items-center gap-2">
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
-            className="px-3 py-1.5 text-xs rounded-lg border
-              dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300
-              bg-white border-zinc-300 text-zinc-700
-              focus:outline-none focus:ring-2 focus:ring-indigo-500/40
-              transition-colors duration-200 cursor-pointer"
+            className="px-3 py-1.5 text-xs rounded-lg cursor-pointer"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border-default)',
+              color: 'var(--text-secondary)',
+              outline: 'none',
+            }}
           >
             {PERIOD_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700
-              bg-gray-100 text-zinc-700 hover:bg-gray-200
-              transition-colors duration-150"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            CSV
-          </button>
-          <button
-            onClick={handleExportReport}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700
-              bg-gray-100 text-zinc-700 hover:bg-gray-200
-              transition-colors duration-150"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-            </svg>
-            Relatório
-          </button>
+
+          {[
+            {
+              label: 'CSV',
+              onClick: handleExportCSV,
+              icon: (
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              ),
+            },
+            {
+              label: 'Relatório',
+              onClick: handleExportReport,
+              icon: (
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+              ),
+            },
+          ].map(({ label, onClick, icon }) => (
+            <button
+              key={label}
+              onClick={onClick}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-default)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--text-primary)';
+                e.currentTarget.style.backgroundColor = 'var(--bg-subtle)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--text-secondary)';
+                e.currentTarget.style.backgroundColor = 'var(--bg-elevated)';
+              }}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* Loading skeleton */}
       {loading && !analytics ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-5 h-64 animate-pulse">
-              <div className="h-4 w-24 dark:bg-zinc-700 bg-zinc-200 rounded mb-4" />
-              <div className="h-40 dark:bg-zinc-700/50 bg-zinc-100 rounded" />
-            </div>
+            <div
+              key={i}
+              className="skeleton rounded-xl h-64"
+              style={{ animationDelay: `${i * 80}ms` }}
+            />
           ))}
         </div>
       ) : analytics ? (
         <div className="space-y-4">
           {/* KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-4">
-              <div className="text-xs dark:text-zinc-500 text-zinc-400 mb-1">Taxa de Finalização</div>
-              <div className="text-2xl font-bold dark:text-emerald-400 text-emerald-600">
-                {Math.round(analytics.finished_rate * 100)}%
-              </div>
-            </div>
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-4">
-              <div className="text-xs dark:text-zinc-500 text-zinc-400 mb-1">Taxa de Abandono</div>
-              <div className="text-2xl font-bold dark:text-red-400 text-red-600">
-                {Math.round(analytics.abandoned_rate * 100)}%
-              </div>
-            </div>
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-4">
-              <div className="text-xs dark:text-zinc-500 text-zinc-400 mb-1">Tempo Médio 1a Resposta</div>
-              <div className="text-2xl font-bold dark:text-indigo-400 text-indigo-600">
-                {formatSeconds(analytics.avg_first_response_seconds)}
-              </div>
-            </div>
+            <KpiCard
+              index={0}
+              label="Taxa de Finalização"
+              value={`${Math.round(analytics.finished_rate * 100)}%`}
+              valueColor="var(--success)"
+            />
+            <KpiCard
+              index={1}
+              label="Taxa de Abandono"
+              value={`${Math.round(analytics.abandoned_rate * 100)}%`}
+              valueColor="var(--danger)"
+            />
+            <KpiCard
+              index={2}
+              label="1ª Resposta"
+              value={formatSeconds(analytics.avg_first_response_seconds)}
+              valueColor="var(--brand-500)"
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Hourly distribution */}
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold dark:text-zinc-100 text-zinc-900 mb-4">
-                Distribuição por Hora
-              </h3>
+            <ChartCard title="Distribuição por Hora" index={0}>
               <div className="max-h-64 overflow-y-auto">
                 <BarChart
                   data={analytics.hourly_distribution.map((h) => ({ label: `${h.hour}h`, value: h.count }))}
                   labelKey="label"
                   valueKey="value"
-                  color="dark:bg-indigo-500 bg-indigo-500"
+                  color="var(--brand-500)"
                 />
               </div>
-            </div>
+            </ChartCard>
 
-            {/* Daily distribution */}
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold dark:text-zinc-100 text-zinc-900 mb-4">
-                Distribuição por Dia da Semana
-              </h3>
+            <ChartCard title="Distribuição por Dia da Semana" index={1}>
               <BarChart
                 data={analytics.daily_distribution.map((d) => ({ label: d.day, value: d.count }))}
                 labelKey="label"
                 valueKey="value"
-                color="dark:bg-emerald-500 bg-emerald-500"
+                color="var(--success)"
               />
-            </div>
+            </ChartCard>
 
-            {/* Tag ranking */}
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold dark:text-zinc-100 text-zinc-900 mb-4">
-                Ranking de Tags
-              </h3>
+            <ChartCard title="Ranking de Tags" index={2}>
               {analytics.tag_ranking.length > 0 ? (
                 <BarChart
                   data={analytics.tag_ranking.map((t) => ({ label: t.tag.slice(0, 8), value: t.count }))}
                   labelKey="label"
                   valueKey="value"
-                  color="dark:bg-amber-500 bg-amber-500"
+                  color="var(--warning)"
                 />
               ) : (
-                <p className="text-xs dark:text-zinc-500 text-zinc-400">
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
                   Nenhuma tag detectada no período
                 </p>
               )}
-            </div>
+            </ChartCard>
 
-            {/* Trend line */}
-            <div className="rounded-xl border dark:border-zinc-800 dark:bg-zinc-800/30 bg-white border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold dark:text-zinc-100 text-zinc-900 mb-4">
-                Tendência (30 dias)
-              </h3>
+            <ChartCard title="Tendência (30 dias)" index={3}>
               <TrendLine data={analytics.daily_trend} />
-              <div className="flex justify-between text-[10px] dark:text-zinc-600 text-zinc-400 mt-1">
+              <div className="flex justify-between text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
                 <span>{analytics.daily_trend[0]?.date ?? ''}</span>
                 <span>{analytics.daily_trend[analytics.daily_trend.length - 1]?.date ?? ''}</span>
               </div>
-            </div>
+            </ChartCard>
           </div>
         </div>
       ) : null}

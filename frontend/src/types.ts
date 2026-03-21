@@ -17,6 +17,7 @@ export interface Conversation {
   first_message_at: string;
   tags: string[];
   satisfaction_score: number;
+  notes?: string;
 }
 
 /** Lightweight summary used in the conversation list endpoint. */

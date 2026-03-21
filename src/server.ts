@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { access } from 'node:fs/promises';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -14,6 +15,8 @@ import { authRoutes } from './routes/auth.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { exportRoutes } from './routes/export.js';
 import { isPanelAuthEnabled, validateToken } from './services/auth.js';
+import { getClientCount } from './services/websocket.js';
+import { registerRateLimiter } from './plugins/rateLimiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,6 +39,9 @@ async function start(): Promise<void> {
     methods: ['GET', 'POST', 'PATCH'],
   });
   await fastify.register(websocket);
+
+  // Rate limiting for POST /api/* routes (100 req/min per API key or IP)
+  registerRateLimiter(fastify);
 
   // API key authentication for webhook endpoints (POST /api/*)
   const apiKey = process.env.API_KEY || '';
@@ -67,9 +73,28 @@ async function start(): Promise<void> {
     });
   }
 
-  // Health check endpoint for Docker / load balancers
+  // Detailed health check for Docker / load balancers / Railway
+  const dataFile = path.resolve(__dirname, '../data/messages.json');
   fastify.get('/health', async (_request, reply) => {
-    return reply.send({ status: 'ok', uptime: process.uptime() });
+    const uptime = process.uptime();
+    const mem = process.memoryUsage();
+    const storageExists = await access(dataFile).then(() => true).catch(() => false);
+    return reply.send({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
+      websocket: {
+        activeConnections: getClientCount(),
+      },
+      memory: {
+        heapUsed: `${Math.round(mem.heapUsed / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(mem.heapTotal / 1024 / 1024)}MB`,
+      },
+      storage: {
+        file: dataFile,
+        exists: storageExists,
+      },
+    });
   });
 
   // Panel authentication middleware for GET /api/* routes (when PANEL_PASSWORD is set)

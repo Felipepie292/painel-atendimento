@@ -3,6 +3,7 @@ import {
   getConversations,
   getConversationById,
   finishConversation,
+  saveNote,
 } from '../services/storage.js';
 import type { ConversationFilters } from '../types/index.js';
 
@@ -107,6 +108,60 @@ export async function conversationRoutes(fastify: FastifyInstance): Promise<void
         }
         const conversation = await getConversationById(request.params.id);
         return reply.send(conversation);
+      } catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Erro interno do servidor' });
+      }
+    },
+  );
+
+  /**
+   * GET /api/conversations/:id/note
+   * Returns the operator notes for a conversation.
+   */
+  fastify.get<{ Params: { id: string } }>(
+    '/conversations/:id/note',
+    { schema: { params: paramsSchema } },
+    async (request, reply) => {
+      try {
+        const conversation = await getConversationById(request.params.id);
+        if (!conversation) {
+          return reply.status(404).send({ error: 'Conversa não encontrada' });
+        }
+        return reply.send({ notes: conversation.notes ?? '' });
+      } catch (err) {
+        fastify.log.error(err);
+        return reply.status(500).send({ error: 'Erro interno do servidor' });
+      }
+    },
+  );
+
+  /**
+   * PUT /api/conversations/:id/note
+   * Saves or updates the operator notes for a conversation.
+   */
+  fastify.put<{ Params: { id: string }; Body: { notes: string } }>(
+    '/conversations/:id/note',
+    {
+      schema: {
+        params: paramsSchema,
+        body: {
+          type: 'object',
+          required: ['notes'],
+          properties: {
+            notes: { type: 'string', maxLength: 5000 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const found = await saveNote(request.params.id, request.body.notes);
+        if (!found) {
+          return reply.status(404).send({ error: 'Conversa não encontrada' });
+        }
+        return reply.send({ ok: true });
       } catch (err) {
         fastify.log.error(err);
         return reply.status(500).send({ error: 'Erro interno do servidor' });
